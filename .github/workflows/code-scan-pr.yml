@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  security-events: write # Required for some security features
+  security-events: write # Required to upload SARIF results
 
 jobs:
   osv-scan:
@@ -22,24 +22,25 @@ jobs:
         with:
           scan-args: |
             --recursive
-            --format json
-            --output osv-results.json
-          fail-on-vulnerabilities: false # Keep going so we can comment on the PR
+            --format sarif
+            --output results.sarif
+
+      - name: Upload SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
 
       - name: Generate PR Comment Body
         id: comment-body
         run: |
-          if [ -s osv-results.json ]; then
-            echo "### 🔍 OSV Vulnerability Scan Results" > pr-comment.md
-            echo "Found vulnerabilities in project dependencies:" >> pr-comment.md
-            echo "\`\`\`json" >> pr-comment.md
-            # Use jq to keep the comment clean if you have it, or just cat
-            cat osv-results.json | head -c 5000 >> pr-comment.md 
-            echo "..." >> pr-comment.md
-            echo "\`\`\`" >> pr-comment.md
+          # Check if the SARIF file has actual vulnerabilities (not just an empty report)
+          # We search for entries in the 'results' array
+          if grep -q "\"results\": \[ {" results.sarif; then
+            echo "### ⚠️ OSV Vulnerability Scan Alert" > pr-comment.md
+            echo "Vulnerabilities were detected in this PR. You can view the detailed report in the [Security Tab](../../security/code-scanning)." >> pr-comment.md
           else
-            echo "### 🔍 OSV Vulnerability Scan Results" > pr-comment.md
-            echo "✅ No vulnerabilities found." >> pr-comment.md
+            echo "### ✅ OSV Vulnerability Scan" > pr-comment.md
+            echo "No known vulnerabilities found in dependencies." >> pr-comment.md
           fi
 
       - name: Create or Update PR Comment
