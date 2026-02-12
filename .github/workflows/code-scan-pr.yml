@@ -20,10 +20,8 @@ jobs:
       - name: Run OSV-Scanner
         uses: google/osv-scanner-action/osv-scanner-action@v1.9.0
         with:
-          scan-args: |
+          scan-args: |-
             --recursive
-            --format sarif
-            --output results.sarif
 
       - name: Generate PR Comment Body
         id: comment-body
