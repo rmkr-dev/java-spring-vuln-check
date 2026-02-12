@@ -25,11 +25,6 @@ jobs:
             --format sarif
             --output results.sarif
 
-      - name: Upload SARIF to GitHub Security Tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: results.sarif
-
       - name: Generate PR Comment Body
         id: comment-body
         run: |
