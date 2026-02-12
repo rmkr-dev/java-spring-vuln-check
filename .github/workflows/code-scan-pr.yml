@@ -11,14 +11,12 @@ permissions:
 
 jobs:
   osv-scan:
+    uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.3"
+
+  comment:
     name: OSV Vulnerability Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run OSV-Scanner
-        uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.3"
 
       - name: Generate PR Comment Body
         id: comment-body
