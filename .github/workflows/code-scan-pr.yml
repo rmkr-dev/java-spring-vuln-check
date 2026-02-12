@@ -12,27 +12,3 @@ permissions:
 jobs:
   osv-scan:
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@v2.3.3"
-
-  comment:
-    name: OSV Vulnerability Scan
-    runs-on: ubuntu-latest
-    steps:
-
-      - name: Generate PR Comment Body
-        id: comment-body
-        run: |
-          # Check if the SARIF file has actual vulnerabilities (not just an empty report)
-          # We search for entries in the 'results' array
-          if grep -q "\"results\": \[ {" results.sarif; then
-            echo "### ⚠️ OSV Vulnerability Scan Alert" > pr-comment.md
-            echo "Vulnerabilities were detected in this PR. You can view the detailed report in the [Security Tab](../../security/code-scanning)." >> pr-comment.md
-          else
-            echo "### ✅ OSV Vulnerability Scan" > pr-comment.md
-            echo "No known vulnerabilities found in dependencies." >> pr-comment.md
-          fi
-
-      - name: Create or Update PR Comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: osv-scan-report
-          path: pr-comment.md
