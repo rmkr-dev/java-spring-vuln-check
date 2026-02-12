@@ -1,0 +1,49 @@
+name: PR Code Vulnerability Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write # Required for some security features
+
+jobs:
+  osv-scan:
+    name: OSV Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v1.9.0
+        with:
+          scan-args: |
+            --recursive
+            --format json
+            --output osv-results.json
+          fail-on-vulnerabilities: false # Keep going so we can comment on the PR
+
+      - name: Generate PR Comment Body
+        id: comment-body
+        run: |
+          if [ -s osv-results.json ]; then
+            echo "### 🔍 OSV Vulnerability Scan Results" > pr-comment.md
+            echo "Found vulnerabilities in project dependencies:" >> pr-comment.md
+            echo "\`\`\`json" >> pr-comment.md
+            # Use jq to keep the comment clean if you have it, or just cat
+            cat osv-results.json | head -c 5000 >> pr-comment.md 
+            echo "..." >> pr-comment.md
+            echo "\`\`\`" >> pr-comment.md
+          else
+            echo "### 🔍 OSV Vulnerability Scan Results" > pr-comment.md
+            echo "✅ No vulnerabilities found." >> pr-comment.md
+          fi
+
+      - name: Create or Update PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: osv-scan-report
+          path: pr-comment.md
