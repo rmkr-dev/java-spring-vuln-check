@@ -23,7 +23,6 @@ jobs:
     with:
       scan-args: |-
         -r
-        --skip-git
         ./
   scan-pr:
     if: >-
@@ -34,7 +33,6 @@ jobs:
     with:
       scan-args: |-
         -r
-        --skip-git
         ./
   comment-pr:
     name: Comment PR with Vulnerabilities
