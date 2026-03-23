@@ -5,7 +5,8 @@ COPY . /javavulny/
 RUN sed -i 's/localhost\:5432/db\:5432/' /javavulny/src/main/resources/application-postgresql.properties
 
 RUN cd /javavulny \
-&& ./gradlew --no-daemon build \
+&& chmod +x gradlew \
+&& ./gradlew --no-daemon bootJar \
 && cp build/libs/java-spring-vuly-0.1.0.jar /app/ \
 && rm -Rf build/ \
 && cd / \
