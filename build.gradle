@@ -1,36 +1,18 @@
-/*plugins {
-    id 'java'
-}
-
-group 'hawk'
-version '1.0-SNAPSHOT'
-
-sourceCompatibility = 1.8
-
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    testCompile group: 'junit', name: 'junit', version: '4.12'
-}*/
-
 buildscript {
     repositories {
         mavenCentral()
     }
     dependencies {
-        classpath("org.springframework.boot:spring-boot-gradle-plugin:2.0.0.RELEASE")
+        // Downgraded to 2.6.5 to ensure several Spring Framework vulnerabilities are present
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:2.6.5")
     }
 }
 
 apply plugin: 'java'
-//apply plugin: 'eclipse'
 apply plugin: 'idea'
 apply plugin: 'org.springframework.boot'
 apply plugin: 'io.spring.dependency-management'
 apply plugin: 'distribution'
-
 
 bootJar {
     baseName = 'java-spring-vuly'
@@ -45,30 +27,38 @@ sourceCompatibility = 11
 targetCompatibility = 11
 
 dependencies {
-
+    // 1. Spring Boot 2.6.5: Vulnerable to Spring4Shell (CVE-2022-22965)
     implementation("org.springframework.boot:spring-boot-starter-web")
-    compileOnly("org.springframework.boot:spring-boot-devtools")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
-    implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
-    implementation("com.h2database:h2")
-    runtimeOnly("org.postgresql:postgresql")
-    implementation("io.jsonwebtoken:jjwt-api:0.10.7")
+    
+    // 2. Log4j 2.14.1: The famous Log4Shell vulnerability (CVE-2021-44228)
+    // This version is highly critical and will definitely show up in OSV.
+    implementation("org.apache.logging.log4j:log4j-core:2.14.1")
+    implementation("org.apache.logging.log4j:log4j-api:2.14.1")
     implementation("org.apache.logging.log4j:log4j-slf4j-impl:2.14.1")
 
+    // 3. Old Springdoc: Vulnerable to XSS in Swagger UI (CVE-2022-24816)
     implementation("org.springdoc:springdoc-openapi-ui:1.2.32")
 
-    testCompileOnly("junit:junit")
+    // 4. H2 Database 1.4.199: Vulnerable to Remote Code Execution (CVE-2021-42392)
+    implementation("com.h2database:h2:1.4.199")
 
-    implementation("io.jsonwebtoken:jjwt-impl:0.10.7")
-    implementation("io.jsonwebtoken:jjwt-jackson:0.10.7")
+    implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
+    runtimeOnly("org.postgresql:postgresql")
+    
+    // 5. Older JJWT: Potential bypass issues in early 0.x versions
+    implementation("io.jsonwebtoken:jjwt-api:0.9.1")
+    implementation("io.jsonwebtoken:jjwt-impl:0.9.1")
+    implementation("io.jsonwebtoken:jjwt-jackson:0.9.1")
 
     compileOnly("org.projectlombok:lombok:1.18.10")
     annotationProcessor("org.projectlombok:lombok:1.18.22")
+    
+    testImplementation("junit:junit:4.12")
 }
 
-configurations.implementation {
+configurations.all {
     exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
 }
-
