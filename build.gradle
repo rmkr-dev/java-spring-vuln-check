@@ -48,10 +48,8 @@ dependencies {
     implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
     runtimeOnly("org.postgresql:postgresql")
     
-    // 5. Older JJWT: Potential bypass issues in early 0.x versions
-    implementation("io.jsonwebtoken:jjwt-api:0.9.1")
-    implementation("io.jsonwebtoken:jjwt-impl:0.9.1")
-    implementation("io.jsonwebtoken:jjwt-jackson:0.9.1")
+    // 5. Older JJWT 0.9.x (single artifact on Maven Central; split jjwt-api/impl/jackson is 0.10+)
+    implementation("io.jsonwebtoken:jjwt:0.9.1")
 
     compileOnly("org.projectlombok:lombok:1.18.10")
     annotationProcessor("org.projectlombok:lombok:1.18.22")
