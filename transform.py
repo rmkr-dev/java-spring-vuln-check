@@ -1,54 +1,57 @@
-import argparse
 import json
+import argparse
+import sys
 from pathlib import Path
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--project-id", required=True)
+    parser.add_argument("--repo-name", default="unknown")
+    args = parser.parse_args()
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Transform OSV scanner JSON into InfraGuard ingest payload."
-    )
-    parser.add_argument("--input", required=True, help="Path to osv-scanner output JSON")
-    parser.add_argument("--output", required=True, help="Path to write InfraGuard ingest JSON")
-    parser.add_argument("--project-id", required=True, help="InfraGuard project ID")
-    parser.add_argument("--repo-name", required=True, help="Source repository name")
-    return parser.parse_args()
-
-
-def _normalize_vuln(vuln: dict) -> dict:
-    aliases = vuln.get("aliases", [])
-    return {
-        "id": vuln.get("id", ""),
-        "summary": vuln.get("summary"),
-        "details": vuln.get("details"),
-        "aliases": aliases,
-        "severity": vuln.get("severity", []),
-        "affected": vuln.get("affected", []),
-        "references": vuln.get("references", []),
-        "database_specific": vuln.get("database_specific", {}),
-        "raw": vuln,
-    }
-
-
-def main() -> None:
-    args = _parse_args()
     input_path = Path(args.input)
-    output_path = Path(args.output)
+    
+    try:
+        with open(input_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        data = {"results": []}
 
-    raw = json.loads(input_path.read_text(encoding="utf-8"))
-    results = raw.get("results", [])
-    vulnerabilities: list[dict] = []
-    for result in results:
-        for pkg in result.get("packages", []):
-            for vuln in pkg.get("vulnerabilities", []):
-                vulnerabilities.append(_normalize_vuln(vuln))
+    # FIX: OSV returns a list when using --recursive or --experimental-all-packages
+    # We normalize it into a 'results' list for the loop below
+    if isinstance(data, list):
+        results = data
+    else:
+        results = data.get("results", [])
 
-    payload = {
-        "project_id": args.project_id,
-        "repo_name": args.repo_name,
-        "vulnerabilities": vulnerabilities,
+    transformed = {
+        "projectId": args.project_id,
+        "repository": args.repo_name,
+        "scanType": "OSV_JAVA",
+        "vulnerabilities": []
     }
-    output_path.write_text(json.dumps(payload), encoding="utf-8")
 
+    for result in results:
+        # Check if the result has packages (some results might be empty)
+        packages = result.get("packages", [])
+        for pkg in packages:
+            p_info = pkg.get("package", {})
+            for vuln in pkg.get("vulnerabilities", []):
+                transformed["vulnerabilities"].append({
+                    "id": vuln.get("id"),
+                    "package": p_info.get("name"),
+                    "version": p_info.get("version"),
+                    "ecosystem": p_info.get("ecosystem"),
+                    "summary": vuln.get("summary", "No summary provided"),
+                    "severity": vuln.get("database_specific", {}).get("severity", "UNKNOWN")
+                })
+
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(transformed, f, indent=2)
+    
+    print(f"Successfully transformed {len(transformed['vulnerabilities'])} vulnerabilities.")
 
 if __name__ == "__main__":
     main()
