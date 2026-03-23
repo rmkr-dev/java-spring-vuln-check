@@ -20,10 +20,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Using a stable version
+          python-version: '3.11'
+
+      # FIX: Generate a dependency list that osv-scanner can actually parse
+      - name: Generate Dependency List
+        run: |
+          chmod +x gradlew
+          ./gradlew dependencies --configuration implementation > dependencies.txt
 
       - name: Install osv-scanner
         run: |
@@ -31,14 +43,11 @@ jobs:
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/osv-scanner
 
-      - name: Run Java Source Scan
+      - name: Run Scan
         run: |
-          # Try scanning. Note: Some versions use --experimental-all-packages
-          # If it fails, we fall back to a standard recursive scan
-          osv-scanner scan --recursive . --experimental-all-packages --format json > /tmp/osv-report.json || \
-          osv-scanner scan --recursive . --format json > /tmp/osv-report.json || true
+          # We scan the generated dependencies.txt file specifically
+          osv-scanner scan --file dependencies.txt --format json > /tmp/osv-report.json || true
           
-          # Force empty list if file is invalid/empty to prevent transform.py crash
           if [ ! -s /tmp/osv-report.json ]; then
             echo "[]" > /tmp/osv-report.json
           fi
@@ -46,19 +55,16 @@ jobs:
       - name: Transform report
         id: transform
         run: |
-          # We capture the output to see if we found anything
           python transform.py \
             --input /tmp/osv-report.json \
             --output /tmp/infraguard-ingest.json \
             --project-id "${{ env.PROJECT_ID }}" \
             --repo-name "${{ env.REPO_NAME }}"
           
-          # Count vulnerabilities to decide if we should push
           VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
           echo "count=$VULN_COUNT" >> $GITHUB_OUTPUT
 
       - name: Send report to InfraGuard
-        # Only push if vulnerabilities > 0 to avoid 422 error
         if: steps.transform.outputs.count != '0'
         run: |
           curl -fsSL -X POST \
