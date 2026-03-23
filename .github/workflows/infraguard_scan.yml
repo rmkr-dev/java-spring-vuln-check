@@ -23,7 +23,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11' # Using a stable version
 
       - name: Install osv-scanner
         run: |
@@ -33,24 +33,33 @@ jobs:
 
       - name: Run Java Source Scan
         run: |
-          # Run scan and capture output. 
-          # If no vulnerabilities are found, osv-scanner might return 0 or 1.
-          osv-scanner scan --recursive . --experimental-all-packages --format json > /tmp/osv-report.json || true
+          # Try scanning. Note: Some versions use --experimental-all-packages
+          # If it fails, we fall back to a standard recursive scan
+          osv-scanner scan --recursive . --experimental-all-packages --format json > /tmp/osv-report.json || \
+          osv-scanner scan --recursive . --format json > /tmp/osv-report.json || true
           
-          # If the file is empty or just whitespace, force it to be an empty JSON list
-          if [ ! -s /tmp/osv-report.json ] || ! grep -q '[^[:space:]]' /tmp/osv-report.json; then
+          # Force empty list if file is invalid/empty to prevent transform.py crash
+          if [ ! -s /tmp/osv-report.json ]; then
             echo "[]" > /tmp/osv-report.json
           fi
 
       - name: Transform report
+        id: transform
         run: |
+          # We capture the output to see if we found anything
           python transform.py \
             --input /tmp/osv-report.json \
             --output /tmp/infraguard-ingest.json \
             --project-id "${{ env.PROJECT_ID }}" \
             --repo-name "${{ env.REPO_NAME }}"
+          
+          # Count vulnerabilities to decide if we should push
+          VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
+          echo "count=$VULN_COUNT" >> $GITHUB_OUTPUT
 
       - name: Send report to InfraGuard
+        # Only push if vulnerabilities > 0 to avoid 422 error
+        if: steps.transform.outputs.count != '0'
         run: |
           curl -fsSL -X POST \
             -H "Content-Type: application/json" \
