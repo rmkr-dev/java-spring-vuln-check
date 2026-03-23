@@ -1,15 +1,12 @@
-# InfraGuard: OSV Scanner → transform.py → POST /api/v1/ingest
+# InfraGuard: Gradle lockfiles → OSV Scanner v2 → transform.py → POST /api/v1/ingest
 #
-# This repo intentionally pins vulnerable dependencies in build.gradle (Spring Boot 2.6.x,
-# Log4j 2.14.1, old H2, etc.) so OSV reports real findings — not a "clean" app.
+# OSV-Scanner v2 does NOT treat build.gradle as a Java manifest. It needs at least one of:
+#   gradle.lockfile, buildscript-gradle.lockfile, gradle/verification-metadata.xml, pom.xml
+# (see https://google.github.io/osv-scanner/supported-languages-and-lockfiles/)
 #
-# Flow:
-#   1. osv-scanner scan -r .  → reads build.gradle / lockfiles (no Gradle build in CI)
-#   2. transform.py           → { project_id, repo_name, vulnerabilities[] } per InfraGuard API
-#   3. curl POST              → ${INFRAGUARD_URL}/api/v1/ingest
+# We generate lockfiles in CI with JDK 17 + ./gradlew dependencies --write-locks, then scan.
 #
-# Optional: set repository secrets INFRAGUARD_PROJECT_ID and INFRAGUARD_URL (defaults below).
-# Docker image build is not required for dependency scanning; keep Dockerfile for local runs.
+# Optional secrets: INFRAGUARD_PROJECT_ID, INFRAGUARD_URL (defaults below).
 
 name: InfraGuard OSV Scan
 
@@ -22,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   osv-scan:
@@ -51,6 +49,25 @@ jobs:
             echo "INFRAGUARD_URL=https://infraguard-production.up.railway.app" >> "$GITHUB_ENV"
           fi
 
+      - name: Set up JDK 17 (for Gradle lockfile generation)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Generate Gradle lockfiles (OSV v2 input)
+        shell: bash
+        env:
+          GRADLE_OPTS: "-Xmx2048m -Dorg.gradle.daemon=false -Dfile.encoding=UTF-8"
+        run: |
+          set -euo pipefail
+          sed -i 's/\r$//' gradlew
+          chmod +x gradlew
+          ./gradlew --no-daemon dependencies --write-locks
+          ./gradlew --no-daemon buildEnvironment --write-locks
+          ls -la gradle.lockfile buildscript-gradle.lockfile 2>/dev/null || true
+          test -f gradle.lockfile || { echo "gradle.lockfile was not created"; exit 1; }
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -64,15 +81,14 @@ jobs:
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/osv-scanner
 
-      - name: Run OSV scan (repository dependencies)
+      - name: Run OSV scan (lockfiles)
         shell: bash
         run: |
           set -euo pipefail
           set +e
-          osv-scanner scan -r . --format json > /tmp/osv-report.json
+          osv-scanner scan source -r . --format json > /tmp/osv-report.json
           rc=$?
           set -e
-          # Exit 1 = vulnerabilities present (expected for this demo repo)
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
             echo "osv-scanner failed with exit code $rc"
             exit "$rc"
@@ -132,4 +148,4 @@ jobs:
         if: steps.transform.outputs.count == '0'
         run: |
           echo "OSV reported 0 vulnerabilities. InfraGuard requires at least one entry — POST skipped."
-          echo "Check build.gradle pins vulnerable versions and re-run the scan."
+          echo "Ensure gradle.lockfile was generated and dependency versions are known to OSV."

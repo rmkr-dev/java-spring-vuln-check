@@ -1,5 +1,9 @@
 // Intentionally vulnerable dependency pins for security demos / OSV scanning (do not "fix" for production).
+// OSV-Scanner v2 only ingests Java deps from gradle.lockfile / buildscript-gradle.lockfile (not build.gradle alone).
 buildscript {
+    configurations.classpath {
+        resolutionStrategy.activateDependencyLocking()
+    }
     repositories {
         mavenCentral()
     }
@@ -22,6 +26,10 @@ bootJar {
 
 repositories {
     mavenCentral()
+}
+
+dependencyLocking {
+    lockAllConfigurations()
 }
 
 sourceCompatibility = 11
