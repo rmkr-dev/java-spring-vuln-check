@@ -26,31 +26,24 @@ jobs:
           python-version: '3.x'
 
       - name: Install osv-scanner
-        shell: bash
         run: |
-          set -euo pipefail
           curl -fsSL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o osv-scanner
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/osv-scanner
 
       - name: Run Java Source Scan
-        shell: bash
         run: |
-          set -euo pipefail
-          # 1. Added --experimental-all-packages to pick up pom.xml without lockfiles
-          # 2. Added a check to ensure the file isn't empty before running Python
+          # Run scan and capture output. 
+          # If no vulnerabilities are found, osv-scanner might return 0 or 1.
           osv-scanner scan --recursive . --experimental-all-packages --format json > /tmp/osv-report.json || true
           
-          if [ ! -s /tmp/osv-report.json ]; then
-            echo "Scan produced no results or empty file. Creating empty JSON array to prevent crash."
+          # If the file is empty or just whitespace, force it to be an empty JSON list
+          if [ ! -s /tmp/osv-report.json ] || ! grep -q '[^[:space:]]' /tmp/osv-report.json; then
             echo "[]" > /tmp/osv-report.json
           fi
 
       - name: Transform report
-        shell: bash
         run: |
-          set -euo pipefail
-          # Assuming transform.py is in the root of your repo
           python transform.py \
             --input /tmp/osv-report.json \
             --output /tmp/infraguard-ingest.json \
@@ -58,9 +51,7 @@ jobs:
             --repo-name "${{ env.REPO_NAME }}"
 
       - name: Send report to InfraGuard
-        shell: bash
         run: |
-          set -euo pipefail
           curl -fsSL -X POST \
             -H "Content-Type: application/json" \
             --data @/tmp/infraguard-ingest.json \
