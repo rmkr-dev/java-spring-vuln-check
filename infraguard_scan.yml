@@ -1,0 +1,63 @@
+name: InfraGuard Java OSV Scan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  scan-java-repo:
+    runs-on: ubuntu-latest
+    
+    env:
+      PROJECT_ID: "0f5330ce-dd0b-437f-881c-a0b3ac959bd6"
+      INFRAGUARD_URL: "https://infraguard-production.up.railway.app"
+      REPO_NAME: ${{ github.repository }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install osv-scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o osv-scanner
+          chmod +x osv-scanner
+          sudo mv osv-scanner /usr/local/bin/osv-scanner
+
+      - name: Run Java Source Scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --recursive scans the current directory for pom.xml, build.gradle, or lockfiles
+          osv-scanner scan --recursive . --format json > /tmp/osv-report.json || true
+          # Note: '|| true' ensures the workflow doesn't fail here if vulnerabilities are found, 
+          # allowing the report to still be pushed to InfraGuard.
+
+      - name: Transform report
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Assuming transform.py is in the root of your repo
+          python transform.py \
+            --input /tmp/osv-report.json \
+            --output /tmp/infraguard-ingest.json \
+            --project-id "${{ env.PROJECT_ID }}" \
+            --repo-name "${{ env.REPO_NAME }}"
+
+      - name: Send report to InfraGuard
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -X POST \
+            -H "Content-Type: application/json" \
+            --data @/tmp/infraguard-ingest.json \
+            "${{ env.INFRAGUARD_URL }}/api/v1/ingest"
