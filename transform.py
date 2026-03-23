@@ -1,6 +1,5 @@
 import json
 import argparse
-import sys
 from pathlib import Path
 
 def main():
@@ -13,18 +12,22 @@ def main():
 
     input_path = Path(args.input)
     
-    try:
-        with open(input_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
+    if not input_path.exists() or input_path.stat().st_size == 0:
         data = {"results": []}
+    else:
+        with open(input_path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                data = {"results": []}
 
-    # FIX: OSV returns a list when using --recursive or --experimental-all-packages
-    # We normalize it into a 'results' list for the loop below
+    # OSV output normalization
     if isinstance(data, list):
         results = data
-    else:
+    elif isinstance(data, dict):
         results = data.get("results", [])
+    else:
+        results = []
 
     transformed = {
         "projectId": args.project_id,
@@ -34,9 +37,7 @@ def main():
     }
 
     for result in results:
-        # Check if the result has packages (some results might be empty)
-        packages = result.get("packages", [])
-        for pkg in packages:
+        for pkg in result.get("packages", []):
             p_info = pkg.get("package", {})
             for vuln in pkg.get("vulnerabilities", []):
                 transformed["vulnerabilities"].append({
@@ -44,14 +45,13 @@ def main():
                     "package": p_info.get("name"),
                     "version": p_info.get("version"),
                     "ecosystem": p_info.get("ecosystem"),
-                    "summary": vuln.get("summary", "No summary provided"),
+                    "summary": vuln.get("summary", "No summary"),
                     "severity": vuln.get("database_specific", {}).get("severity", "UNKNOWN")
                 })
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(transformed, f, indent=2)
-    
-    print(f"Successfully transformed {len(transformed['vulnerabilities'])} vulnerabilities.")
+    print(f"Transformed {len(transformed['vulnerabilities'])} vulnerabilities.")
 
 if __name__ == "__main__":
     main()
