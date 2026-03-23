@@ -1,57 +1,57 @@
-import json
 import argparse
+import json
 from pathlib import Path
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--project-id", required=True)
-    parser.add_argument("--repo-name", default="unknown")
-    args = parser.parse_args()
 
-    input_path = Path(args.input)
-    
-    if not input_path.exists() or input_path.stat().st_size == 0:
-        data = {"results": []}
-    else:
-        with open(input_path, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                data = {"results": []}
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Transform OSV scanner JSON into InfraGuard ingest payload."
+    )
+    parser.add_argument("--input", required=True, help="Path to osv-scanner output JSON")
+    parser.add_argument("--output", required=True, help="Path to write InfraGuard ingest JSON")
+    parser.add_argument("--project-id", required=True, help="InfraGuard project ID")
+    parser.add_argument("--repo-name", required=True, help="Source repository name")
+    return parser.parse_args()
 
-    # OSV output normalization
-    if isinstance(data, list):
-        results = data
-    elif isinstance(data, dict):
-        results = data.get("results", [])
-    else:
-        results = []
 
-    transformed = {
-        "projectId": args.project_id,
-        "repository": args.repo_name,
-        "scanType": "OSV_JAVA",
-        "vulnerabilities": []
+def _normalize_vuln(vuln: dict) -> dict:
+    aliases = vuln.get("aliases", [])
+    return {
+        "id": vuln.get("id", ""),
+        "summary": vuln.get("summary"),
+        "details": vuln.get("details"),
+        "aliases": aliases,
+        "severity": vuln.get("severity", []),
+        "affected": vuln.get("affected", []),
+        "references": vuln.get("references", []),
+        "database_specific": vuln.get("database_specific", {}),
+        "raw": vuln,
     }
 
+
+def main() -> None:
+    args = _parse_args()
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+
+    raw = json.loads(input_path.read_text(encoding="utf-8"))
+    if isinstance(raw, list):
+        results = raw
+    else:
+        results = raw.get("results", [])
+    vulnerabilities: list[dict] = []
     for result in results:
         for pkg in result.get("packages", []):
-            p_info = pkg.get("package", {})
             for vuln in pkg.get("vulnerabilities", []):
-                transformed["vulnerabilities"].append({
-                    "id": vuln.get("id"),
-                    "package": p_info.get("name"),
-                    "version": p_info.get("version"),
-                    "ecosystem": p_info.get("ecosystem"),
-                    "summary": vuln.get("summary", "No summary"),
-                    "severity": vuln.get("database_specific", {}).get("severity", "UNKNOWN")
-                })
+                vulnerabilities.append(_normalize_vuln(vuln))
 
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(transformed, f, indent=2)
-    print(f"Transformed {len(transformed['vulnerabilities'])} vulnerabilities.")
+    payload = {
+        "project_id": args.project_id,
+        "repo_name": args.repo_name,
+        "vulnerabilities": vulnerabilities,
+    }
+    output_path.write_text(json.dumps(payload), encoding="utf-8")
+
 
 if __name__ == "__main__":
     main()

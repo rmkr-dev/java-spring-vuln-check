@@ -2,72 +2,123 @@ name: InfraGuard Java OSV Scan
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
   scan-java-repo:
     runs-on: ubuntu-latest
-    
+
     env:
-      PROJECT_ID: "0f5330ce-dd0b-437f-881c-a0b3ac959bd6"
-      INFRAGUARD_URL: "https://infraguard-production.up.railway.app"
+      IMAGE_NAME: java-spring-vuln-check:scan
       REPO_NAME: ${{ github.repository }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Resolve InfraGuard env (secrets or defaults)
+        shell: bash
+        env:
+          SECRET_PROJECT_ID: ${{ secrets.INFRAGUARD_PROJECT_ID }}
+          SECRET_URL: ${{ secrets.INFRAGUARD_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SECRET_PROJECT_ID}" ]; then
+            echo "PROJECT_ID=${SECRET_PROJECT_ID}" >> "$GITHUB_ENV"
+          else
+            echo "PROJECT_ID=0f5330ce-dd0b-437f-881c-a0b3ac959bd6" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${SECRET_URL}" ]; then
+            echo "INFRAGUARD_URL=${SECRET_URL}" >> "$GITHUB_ENV"
+          else
+            echo "INFRAGUARD_URL=https://infraguard-production.up.railway.app" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build application image
+        uses: docker/build-push-action@v6
         with:
-          java-version: '11'
-          distribution: 'temurin'
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      # FIX: Generate a dependency list that osv-scanner can actually parse
-      - name: Generate Dependency List
-        run: |
-          chmod +x gradlew
-          ./gradlew dependencies --configuration implementation > dependencies.txt
+          python-version: "3.11"
 
       - name: Install osv-scanner
+        shell: bash
         run: |
+          set -euo pipefail
           curl -fsSL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o osv-scanner
           chmod +x osv-scanner
           sudo mv osv-scanner /usr/local/bin/osv-scanner
 
-      - name: Run Scan
+      - name: Run OSV scan (source + container)
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
-          # We scan the generated dependencies.txt file specifically
-          osv-scanner scan --file dependencies.txt --format json > /tmp/osv-report.json || true
-          
-          if [ ! -s /tmp/osv-report.json ]; then
-            echo "[]" > /tmp/osv-report.json
-          fi
+          set -euo pipefail
+          run_scan() {
+            local out="$1"
+            shift
+            set +e
+            "$@" > "$out"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+              echo "osv-scanner failed with exit code $rc"
+              exit "$rc"
+            fi
+            if [ ! -s "$out" ]; then
+              echo '{"results":[]}' > "$out"
+            fi
+          }
+          run_scan /tmp/osv-src.json osv-scanner scan -r . --format json
+          run_scan /tmp/osv-docker.json osv-scanner scan --docker "${IMAGE_NAME}" --format json
+          jq -s '{results: [.[].results[]]}' /tmp/osv-src.json /tmp/osv-docker.json > /tmp/osv-report.json
 
       - name: Transform report
         id: transform
+        shell: bash
         run: |
+          set -euo pipefail
           python transform.py \
             --input /tmp/osv-report.json \
             --output /tmp/infraguard-ingest.json \
-            --project-id "${{ env.PROJECT_ID }}" \
-            --repo-name "${{ env.REPO_NAME }}"
-          
+            --project-id "${PROJECT_ID}" \
+            --repo-name "${REPO_NAME}"
           VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
-          echo "count=$VULN_COUNT" >> $GITHUB_OUTPUT
+          echo "count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Found $VULN_COUNT vulnerabilities (OSV)."
+          python3 -c "import json,sys; d=json.load(open('/tmp/osv-report.json')); \
+            [print(v.get('id',''), v.get('summary','')[:120]) \
+            for r in d.get('results',[]) for p in r.get('packages',[]) for v in p.get('vulnerabilities',[])]" || true
+
+      - name: Upload OSV JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: osv-report
+          path: /tmp/osv-report.json
 
       - name: Send report to InfraGuard
         if: steps.transform.outputs.count != '0'
+        shell: bash
         run: |
+          set -euo pipefail
           curl -fsSL -X POST \
             -H "Content-Type: application/json" \
             --data @/tmp/infraguard-ingest.json \
-            "${{ env.INFRAGUARD_URL }}/api/v1/ingest"
+            "${INFRAGUARD_URL}/api/v1/ingest"
+
+      - name: No vulnerabilities to ingest
+        if: steps.transform.outputs.count == '0'
+        run: |
+          echo "OSV reported 0 vulnerabilities; InfraGuard ingest requires at least one (skipped POST)."
