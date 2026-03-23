@@ -1,3 +1,8 @@
+"""Map OSV scanner JSON to InfraGuard POST /api/v1/ingest body.
+
+Expected keys: project_id, repo_name, vulnerabilities[] (OSV-shaped entries with raw).
+Matches infraguard/action/infraguard-scan/transform.py for the same API contract.
+"""
 import argparse
 import json
 from pathlib import Path

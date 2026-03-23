@@ -1,3 +1,4 @@
+// Intentionally vulnerable dependency pins for security demos / OSV scanning (do not "fix" for production).
 buildscript {
     repositories {
         mavenCentral()
