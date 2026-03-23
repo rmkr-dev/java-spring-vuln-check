@@ -37,10 +37,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # --recursive scans the current directory for pom.xml, build.gradle, or lockfiles
-          osv-scanner scan --recursive . --format json > /tmp/osv-report.json || true
-          # Note: '|| true' ensures the workflow doesn't fail here if vulnerabilities are found, 
-          # allowing the report to still be pushed to InfraGuard.
+          # 1. Added --experimental-all-packages to pick up pom.xml without lockfiles
+          # 2. Added a check to ensure the file isn't empty before running Python
+          osv-scanner scan --recursive . --experimental-all-packages --format json > /tmp/osv-report.json || true
+          
+          if [ ! -s /tmp/osv-report.json ]; then
+            echo "Scan produced no results or empty file. Creating empty JSON array to prevent crash."
+            echo "[]" > /tmp/osv-report.json
+          fi
 
       - name: Transform report
         shell: bash
