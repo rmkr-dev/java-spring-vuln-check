@@ -41,7 +41,7 @@ jobs:
           if [ -n "${SECRET_PROJECT_ID}" ]; then
             echo "PROJECT_ID=${SECRET_PROJECT_ID}" >> "$GITHUB_ENV"
           else
-            echo "PROJECT_ID=fa143c33-eb98-4079-8321-fc1d6a50b908" >> "$GITHUB_ENV"
+            echo "PROJECT_ID=fb06957d-066d-42a7-b020-99eee25d50b9" >> "$GITHUB_ENV"
           fi
           if [ -n "${SECRET_URL}" ]; then
             echo "INFRAGUARD_URL=${SECRET_URL}" >> "$GITHUB_ENV"
