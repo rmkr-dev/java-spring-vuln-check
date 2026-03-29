@@ -1,5 +1,25 @@
-// Intentionally vulnerable dependency pins for security demos / OSV scanning (do not "fix" for production).
-// OSV-Scanner v2 only ingests Java deps from gradle.lockfile / buildscript-gradle.lockfile (not build.gradle alone).
+// Curated demo dependency surface for OSV / InfraGuard: ~15 CVEs in three CVSS v3.1 base-score bands.
+// Regenerate lockfiles after edits: ./gradlew --no-daemon dependencies --write-locks buildEnvironment --write-locks
+//
+// | Band (base) | CVE | Source pin |
+// |-------------|-----|------------|
+// | 9.0–10.0 | CVE-2021-44228, CVE-2021-45046 | log4j 2.14.1 |
+// | 9.0–10.0 | CVE-2021-42392 | h2 1.4.199 |
+// | 9.0–10.0 | CVE-2022-42889 | commons-text 1.9 |
+// | 9.0–10.0 | CVE-2022-22978 | spring-security 5.7.2 (regexRequestMatchers bypass) |
+// | 8.0–8.9 | CVE-2022-1471 | snakeyaml 1.31 |
+// | 8.0–8.9 | CVE-2024-1597 | postgresql jdbc 42.6.0 |
+// | 8.0–8.9 | CVE-2023-1370 | json-smart 2.4.7 |
+// | 8.0–8.9 | CVE-2022-24816 | springdoc-openapi-ui 1.6.8 |
+// | 8.0–8.9 | CVE-2023-34034 | spring-security 5.7.2 (authorization rules) |
+// | 7.0–7.9 | CVE-2022-42003, CVE-2022-42004 | jackson 2.13.4 |
+// | 7.0–7.9 | CVE-2022-25647 | gson 2.8.5 |
+// | 7.0–7.9 | CVE-2023-43642 | snappy-java 1.1.10.3 |
+// | 7.0–7.9 | CVE-2023-5072 | org.json 20220924 |
+// (log4j 2.14.1 may still list additional sub-7.0 IDs such as CVE-2021-44832 / CVE-2021-45105 in OSV output.)
+//
+// Spring Boot 2.7.18 removes the large Spring/Tomcat/CVE tail from 2.6.5 while staying on javax.* APIs.
+
 buildscript {
     configurations.classpath {
         resolutionStrategy.activateDependencyLocking()
@@ -8,8 +28,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        // Downgraded to 2.6.5 to ensure several Spring Framework vulnerabilities are present
-        classpath("org.springframework.boot:spring-boot-gradle-plugin:2.6.5")
+        classpath("org.springframework.boot:spring-boot-gradle-plugin:2.7.18")
     }
 }
 
@@ -19,9 +38,9 @@ apply plugin: 'org.springframework.boot'
 apply plugin: 'io.spring.dependency-management'
 apply plugin: 'distribution'
 
-bootJar {
-    baseName = 'java-spring-vuly'
-    version =  '0.1.0'
+tasks.named('bootJar') {
+    archiveBaseName = 'java-spring-vuly'
+    archiveVersion = '0.1.0'
 }
 
 repositories {
@@ -35,37 +54,61 @@ dependencyLocking {
 sourceCompatibility = 11
 targetCompatibility = 11
 
+configurations.configureEach {
+    resolutionStrategy {
+        eachDependency { details ->
+            if (details.requested.group == 'org.springframework.security') {
+                details.useVersion('5.7.2')
+                details.because('demo: CVE-2022-22978 / CVE-2023-34034 (spring-security 5.7.2)')
+            }
+            if (details.requested.group == 'org.yaml' && details.requested.name == 'snakeyaml') {
+                details.useVersion('1.31')
+                details.because('demo: CVE-2022-1471 (snakeyaml < 2.0)')
+            }
+            if (details.requested.group == 'com.fasterxml.jackson.core' &&
+                    details.requested.name in ['jackson-databind', 'jackson-core', 'jackson-annotations']) {
+                details.useVersion('2.13.4')
+                details.because('demo: CVE-2022-42003 / CVE-2022-42004')
+            }
+            if (details.requested.group == 'net.minidev' && details.requested.name == 'json-smart') {
+                details.useVersion('2.4.7')
+                details.because('demo: CVE-2023-1370')
+            }
+        }
+    }
+}
+
 dependencies {
-    // 1. Spring Boot 2.6.5: Vulnerable to Spring4Shell (CVE-2022-22965)
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
-    
-    // 2. Log4j 2.14.1: The famous Log4Shell vulnerability (CVE-2021-44228)
-    // This version is highly critical and will definitely show up in OSV.
+
     implementation("org.apache.logging.log4j:log4j-core:2.14.1")
     implementation("org.apache.logging.log4j:log4j-api:2.14.1")
     implementation("org.apache.logging.log4j:log4j-slf4j-impl:2.14.1")
 
-    // 3. Old Springdoc: Vulnerable to XSS in Swagger UI (CVE-2022-24816)
-    implementation("org.springdoc:springdoc-openapi-ui:1.2.32")
+    implementation("org.springdoc:springdoc-openapi-ui:1.6.8")
 
-    // 4. H2 Database 1.4.199: Vulnerable to Remote Code Execution (CVE-2021-42392)
     implementation("com.h2database:h2:1.4.199")
 
-    implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
-    runtimeOnly("org.postgresql:postgresql")
-    
-    // 5. Older JJWT 0.9.x (single artifact on Maven Central; split jjwt-api/impl/jackson is 0.10+)
-    implementation("io.jsonwebtoken:jjwt:0.9.1")
+    implementation("org.apache.commons:commons-text:1.9")
+    implementation("org.apache.commons:commons-compress:1.26.2")
 
-    compileOnly("org.projectlombok:lombok:1.18.10")
-    annotationProcessor("org.projectlombok:lombok:1.18.22")
-    
-    testImplementation("junit:junit:4.12")
+    implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
+    runtimeOnly("org.postgresql:postgresql:42.6.0")
+
+    implementation("io.jsonwebtoken:jjwt:0.9.1")
+    implementation("com.google.code.gson:gson:2.8.5")
+    implementation("org.xerial.snappy:snappy-java:1.1.10.3")
+    implementation("org.json:json:20220924")
+
+    compileOnly("org.projectlombok:lombok:1.18.30")
+    annotationProcessor("org.projectlombok:lombok:1.18.30")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
-configurations.all {
+configurations.configureEach {
     exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
 }
