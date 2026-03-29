@@ -2,7 +2,7 @@ package hawk.api.token;
 
 import org.springframework.security.web.authentication.preauth.AbstractPreAuthenticatedProcessingFilter;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 
 public class TokenFilter extends AbstractPreAuthenticatedProcessingFilter {
 

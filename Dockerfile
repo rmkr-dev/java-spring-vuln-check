@@ -11,7 +11,7 @@ RUN sed -i 's/localhost\:5432/db\:5432/' src/main/resources/application-postgres
 
 ENV GRADLE_OPTS="-Xmx2048m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8 -Dorg.gradle.daemon=false"
 
-# Skip tests/checks (none in repo / avoids flaky validation); wrapper pulls Gradle 7.6.4 per gradle-wrapper.properties
+# Skip tests/checks (none in repo / avoids flaky validation); wrapper uses Gradle 8.5+ (JDK 17, Spring Boot 3.4).
 RUN ./gradlew --no-daemon bootJar --stacktrace -x test -x check
 
 FROM eclipse-temurin:17-jre-jammy

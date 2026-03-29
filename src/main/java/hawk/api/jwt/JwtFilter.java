@@ -1,21 +1,20 @@
 package hawk.api.jwt;
 
-import hawk.api.jwt.JwtTokenProvider;
 import hawk.context.TenantContext;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.GenericFilterBean;
 
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.ServletRequest;
-import javax.servlet.ServletResponse;
-import javax.servlet.http.HttpServletRequest;
 import java.io.IOException;
 
 public class JwtFilter extends GenericFilterBean {
 
-    private JwtTokenProvider jwtTokenProvider;
+    private final JwtTokenProvider jwtTokenProvider;
 
     public JwtFilter(JwtTokenProvider jwtTokenProvider) {
         this.jwtTokenProvider = jwtTokenProvider;
@@ -27,7 +26,7 @@ public class JwtFilter extends GenericFilterBean {
         String token = jwtTokenProvider.resolveToken((HttpServletRequest) req);
 
         if (token != null && jwtTokenProvider.validateToken(token)) {
-            Authentication auth = token != null ? jwtTokenProvider.getAuthentication(token) : null;
+            Authentication auth = jwtTokenProvider.getAuthentication(token);
             SecurityContextHolder.getContext().setAuthentication(auth);
             TenantContext.setCurrentTenant(jwtTokenProvider.getTenantId(token));
         }

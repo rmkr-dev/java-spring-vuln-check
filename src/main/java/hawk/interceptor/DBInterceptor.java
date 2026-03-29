@@ -2,40 +2,35 @@ package hawk.interceptor;
 
 import hawk.context.TenantContext;
 import hawk.entity.TenantSupport;
-import org.hibernate.EmptyInterceptor;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.orm.jpa.JpaProperties;
-import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
+import org.hibernate.Interceptor;
+import org.hibernate.type.Type;
+import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
-import org.hibernate.type.Type;
 
-import javax.sql.DataSource;
 import java.io.Serializable;
-import java.util.HashMap;
-import java.util.Map;
 
 @Configuration
 public class DBInterceptor {
 
-    @Autowired
-    private JpaProperties jpaProperties;
-
     @Bean
-    public EmptyInterceptor hibernateInterceptor() {
-        return new EmptyInterceptor() {
-
+    public Interceptor hibernateInterceptor() {
+        return new Interceptor() {
             @Override
-            public void onDelete(Object entity, Serializable id, Object[] state, String[] propertyNames, Type[] types) {
+            public void onDelete(Object entity, Object id, Object[] state, String[] propertyNames, Type[] types) {
                 if (entity instanceof TenantSupport) {
                     ((TenantSupport) entity).setTenantId(TenantContext.getCurrentTenant());
                 }
             }
 
-
             @Override
-            public boolean onFlushDirty(Object entity, Serializable id, Object[] currentState, Object[] previousState, String[] propertyNames, Type[] types) {
+            public boolean onFlushDirty(
+                    Object entity,
+                    Object id,
+                    Object[] currentState,
+                    Object[] previousState,
+                    String[] propertyNames,
+                    Type[] types) {
                 if (entity instanceof TenantSupport) {
                     ((TenantSupport) entity).setTenantId(TenantContext.getCurrentTenant());
                 }
@@ -43,7 +38,7 @@ public class DBInterceptor {
             }
 
             @Override
-            public boolean onSave(Object entity, Serializable id, Object[] state, String[] propertyNames, Type[] types) {
+            public boolean onSave(Object entity, Object id, Object[] state, String[] propertyNames, Type[] types) {
                 if (entity instanceof TenantSupport) {
                     ((TenantSupport) entity).setTenantId(TenantContext.getCurrentTenant());
                 }
@@ -53,9 +48,7 @@ public class DBInterceptor {
     }
 
     @Bean
-    public LocalContainerEntityManagerFactoryBean entityManagerFactory(EntityManagerFactoryBuilder factory, DataSource dataSource, JpaProperties properties) {
-        Map<String, Object> jpaPropertiesMap = new HashMap<>(jpaProperties.getProperties());
-        jpaPropertiesMap.put("hibernate.ejb.interceptor", hibernateInterceptor());
-        return factory.dataSource(dataSource).packages("hawk.entity").properties(jpaPropertiesMap).build();
+    public HibernatePropertiesCustomizer hibernatePropertiesCustomizer(Interceptor hibernateInterceptor) {
+        return hibernateProperties -> hibernateProperties.put("hibernate.session_factory.interceptor", hibernateInterceptor);
     }
 }

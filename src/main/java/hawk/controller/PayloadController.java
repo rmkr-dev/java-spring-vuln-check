@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.commons.compress.utils.IOUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
@@ -64,7 +63,7 @@ public class PayloadController {
             public void writeTo(OutputStream outputStream) throws IOException {
 
                 if(payloadCache.containsKey(size)){
-                    IOUtils.copy(new ByteArrayInputStream(payloadCache.get(size)), outputStream);
+                    new ByteArrayInputStream(payloadCache.get(size)).transferTo(outputStream);
                 }else {
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
                     cnt += tmpData.length();

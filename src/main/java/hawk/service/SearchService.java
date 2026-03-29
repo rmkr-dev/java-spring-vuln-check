@@ -5,7 +5,7 @@ import hawk.form.Search;
 import org.hibernate.Session;
 import org.hibernate.jdbc.ReturningWork;
 import org.springframework.beans.factory.annotation.Autowired;
-import javax.persistence.EntityManager;
+import jakarta.persistence.EntityManager;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.PreparedStatement;
