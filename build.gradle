@@ -1,24 +1,21 @@
-// Curated demo dependency surface for OSV / InfraGuard: ~15 CVEs in three CVSS v3.1 base-score bands.
-// Regenerate lockfiles after edits: ./gradlew --no-daemon dependencies --write-locks buildEnvironment --write-locks
+// Curated demo surface: target ~15 OSV/GitHub Advisory findings in three CVSS v3.1 base-score bands.
+// Strategy: Jetty (no embedded Tomcat) + Spring Framework 5.3.39 / Spring Security 5.7.12 + current Jackson/SnakeYAML
+// from the Boot BOM removes the long tail of Tomcat/Spring/Jackson noise. Only the pins below keep intentional risk.
 //
-// | Band (base) | CVE | Source pin |
-// |-------------|-----|------------|
-// | 9.0–10.0 | CVE-2021-44228, CVE-2021-45046 | log4j 2.14.1 |
-// | 9.0–10.0 | CVE-2021-42392 | h2 1.4.199 |
-// | 9.0–10.0 | CVE-2022-42889 | commons-text 1.9 |
-// | 9.0–10.0 | CVE-2022-22978 | spring-security 5.7.2 (regexRequestMatchers bypass) |
-// | 8.0–8.9 | CVE-2022-1471 | snakeyaml 1.31 |
-// | 8.0–8.9 | CVE-2024-1597 | postgresql jdbc 42.6.0 |
-// | 8.0–8.9 | CVE-2023-1370 | json-smart 2.4.7 |
-// | 8.0–8.9 | CVE-2022-24816 | springdoc-openapi-ui 1.6.8 |
-// | 8.0–8.9 | CVE-2023-34034 | spring-security 5.7.2 (authorization rules) |
-// | 7.0–7.9 | CVE-2022-42003, CVE-2022-42004 | jackson 2.13.4 |
-// | 7.0–7.9 | CVE-2022-25647 | gson 2.8.5 |
-// | 7.0–7.9 | CVE-2023-43642 | snappy-java 1.1.10.3 |
-// | 7.0–7.9 | CVE-2023-5072 | org.json 20220924 |
-// (log4j 2.14.1 may still list additional sub-7.0 IDs such as CVE-2021-44832 / CVE-2021-45105 in OSV output.)
+// | Band (base) | Intended primary IDs (verify with osv-scanner) | Pin |
+// |-------------|--------------------------------------------------|-----|
+// | 9.0–10.0 | Log4Shell family (e.g. GHSA-jfh8-c2jp-5v3q, GHSA-8489-44mv-ggj8, …) | log4j 2.14.1 |
+// | 9.0–10.0 | H2 RCE / console (e.g. GHSA-h376-j262-vhq6, GHSA-45hx-wfhj-473x) | h2 1.4.199 |
+// | 9.0–10.0 | Text4Shell (GHSA-599f-7c49-w659) | commons-text 1.9 |
+// | 8.0–8.9 | PG JDBC line comment / SQLi class (GHSA-24rp-q3w6-vc56) | postgresql 42.6.0 |
+// | 8.0–8.9 | json-smart (CVE-2023-1370 / related GHSA) | json-smart 2.4.7 |
+// | 8.0–8.9 | Springdoc / Swagger UI XSS (CVE-2022-24816 family) | springdoc-openapi-ui 1.6.8 |
+// | 7.0–7.9 | Gson deserialization (GHSA-4jrv-ppp4-jm57) | gson 2.8.5 |
+// | 7.0–7.9 | Snappy chunk length DoS (GHSA-55g7-9cwv-5qfv) | snappy-java 1.1.10.3 |
+// | 7.0–7.9 | json-java stack / DoS (GHSA-3vqj-43w4-2q58, GHSA-4jq9-2xhw-jpx7) | org.json:json 20220924 |
 //
-// Spring Boot 2.7.18 removes the large Spring/Tomcat/CVE tail from 2.6.5 while staying on javax.* APIs.
+// Fifth 9+ / remaining 8+ / 7+ slots are filled by additional advisories on the same coordinates (e.g. multiple Log4j2
+// GHSA per version, multiple H2 console/GHSA rows). Regenerate lockfiles: ./gradlew dependencies --write-locks buildEnvironment --write-locks
 
 buildscript {
     configurations.classpath {
@@ -30,6 +27,12 @@ buildscript {
     dependencies {
         classpath("org.springframework.boot:spring-boot-gradle-plugin:2.7.18")
     }
+}
+
+// Patched Spring line aligned with Boot 2.7 — removes most Framework/Security GHSA noise from older 5.3.31 / 5.7.11.
+ext {
+    set('spring-framework.version', '5.3.39')
+    set('spring-security.version', '5.7.12')
 }
 
 apply plugin: 'java'
@@ -54,59 +57,41 @@ dependencyLocking {
 sourceCompatibility = 11
 targetCompatibility = 11
 
-configurations.configureEach {
-    resolutionStrategy {
-        eachDependency { details ->
-            if (details.requested.group == 'org.springframework.security') {
-                details.useVersion('5.7.2')
-                details.because('demo: CVE-2022-22978 / CVE-2023-34034 (spring-security 5.7.2)')
-            }
-            if (details.requested.group == 'org.yaml' && details.requested.name == 'snakeyaml') {
-                details.useVersion('1.31')
-                details.because('demo: CVE-2022-1471 (snakeyaml < 2.0)')
-            }
-            if (details.requested.group == 'com.fasterxml.jackson.core' &&
-                    details.requested.name in ['jackson-databind', 'jackson-core', 'jackson-annotations']) {
-                details.useVersion('2.13.4')
-                details.because('demo: CVE-2022-42003 / CVE-2022-42004')
-            }
-            if (details.requested.group == 'net.minidev' && details.requested.name == 'json-smart') {
-                details.useVersion('2.4.7')
-                details.because('demo: CVE-2023-1370')
-            }
-        }
-    }
-}
-
 dependencies {
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    implementation("org.springframework.boot:spring-boot-starter-security")
-    implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
+    implementation('org.springframework.boot:spring-boot-starter-web') {
+        exclude group: 'org.springframework.boot', module: 'spring-boot-starter-tomcat'
+    }
+    implementation('org.springframework.boot:spring-boot-starter-jetty')
 
-    implementation("org.apache.logging.log4j:log4j-core:2.14.1")
-    implementation("org.apache.logging.log4j:log4j-api:2.14.1")
-    implementation("org.apache.logging.log4j:log4j-slf4j-impl:2.14.1")
+    implementation('org.springframework.boot:spring-boot-starter-data-jpa')
+    implementation('org.springframework.boot:spring-boot-starter-security')
+    implementation('org.springframework.boot:spring-boot-starter-thymeleaf')
 
-    implementation("org.springdoc:springdoc-openapi-ui:1.6.8")
+    implementation('org.apache.logging.log4j:log4j-core:2.14.1')
+    implementation('org.apache.logging.log4j:log4j-api:2.14.1')
+    implementation('org.apache.logging.log4j:log4j-slf4j-impl:2.14.1')
 
-    implementation("com.h2database:h2:1.4.199")
+    implementation('org.springdoc:springdoc-openapi-ui:1.6.8')
 
-    implementation("org.apache.commons:commons-text:1.9")
-    implementation("org.apache.commons:commons-compress:1.26.2")
+    implementation('com.h2database:h2:1.4.199')
 
-    implementation("org.thymeleaf.extras:thymeleaf-extras-springsecurity5")
-    runtimeOnly("org.postgresql:postgresql:42.6.0")
+    implementation('org.apache.commons:commons-text:1.9')
+    implementation('org.apache.commons:commons-compress:1.27.1')
+    implementation('org.apache.commons:commons-lang3:3.17.0')
 
-    implementation("io.jsonwebtoken:jjwt:0.9.1")
-    implementation("com.google.code.gson:gson:2.8.5")
-    implementation("org.xerial.snappy:snappy-java:1.1.10.3")
-    implementation("org.json:json:20220924")
+    implementation('org.thymeleaf.extras:thymeleaf-extras-springsecurity5')
+    runtimeOnly('org.postgresql:postgresql:42.6.0')
 
-    compileOnly("org.projectlombok:lombok:1.18.30")
-    annotationProcessor("org.projectlombok:lombok:1.18.30")
+    implementation('io.jsonwebtoken:jjwt:0.9.1')
+    implementation('com.google.code.gson:gson:2.8.5')
+    implementation('net.minidev:json-smart:2.4.7')
+    implementation('org.xerial.snappy:snappy-java:1.1.10.3')
+    implementation('org.json:json:20220924')
 
-    testImplementation("junit:junit:4.13.2")
+    compileOnly('org.projectlombok:lombok:1.18.30')
+    annotationProcessor('org.projectlombok:lombok:1.18.30')
+
+    testImplementation('junit:junit:4.13.2')
 }
 
 configurations.configureEach {
