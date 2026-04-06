@@ -1,10 +1,3 @@
-# InfraGuard: CSV → transform.py → POST /api/v1/ingest
-#
-# Reads a local full_nvd_cves.csv file in the repo and pushes all 
-# vulnerabilities to the InfraGuard API endpoint.
-#
-# Optional secrets: INFRAGUARD_PROJECT_ID, INFRAGUARD_URL (defaults below).
-
 name: InfraGuard CSV Ingest
 
 on:
@@ -53,7 +46,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Ensure the CSV exists before processing
+          
           if [ ! -f sub_list_a.csv ]; then
             echo "Error: sub_list_a.csv not found in the repository root."
             exit 1
@@ -77,7 +70,8 @@ jobs:
           with open("/tmp/infraguard-ingest.json") as f:
               d = json.load(f)
           for v in d.get("vulnerabilities", []):
-              print(f"{v.get('id', '')} - {str(v.get('summary', ''))[:140]}")
+              # Prints the CVE ID along with the newly extracted CVSS Score
+              print(f"{v.get('id', 'MISSING_ID')} (CVSS: {v.get('cvss_score')}) - {str(v.get('summary', ''))[:100]}")
           PY
 
       - name: Upload InfraGuard payload (debug)
