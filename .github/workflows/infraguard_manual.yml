@@ -1,0 +1,102 @@
+# InfraGuard: CSV → transform.py → POST /api/v1/ingest
+#
+# Reads a local full_nvd_cves.csv file in the repo and pushes all 
+# vulnerabilities to the InfraGuard API endpoint.
+#
+# Optional secrets: INFRAGUARD_PROJECT_ID, INFRAGUARD_URL (defaults below).
+
+name: InfraGuard CSV Ingest
+
+on:
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  csv-ingest:
+    runs-on: ubuntu-latest
+    env:
+      REPO_NAME: ${{ github.repository }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve InfraGuard target
+        shell: bash
+        env:
+          SECRET_PROJECT_ID: ${{ secrets.INFRAGUARD_PROJECT_ID }}
+          SECRET_URL: ${{ secrets.INFRAGUARD_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SECRET_PROJECT_ID}" ]; then
+            echo "PROJECT_ID=${SECRET_PROJECT_ID}" >> "$GITHUB_ENV"
+          else
+            echo "PROJECT_ID=fb06957d-066d-42a7-b020-99eee25d50b9" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${SECRET_URL}" ]; then
+            echo "INFRAGUARD_URL=${SECRET_URL}" >> "$GITHUB_ENV"
+          else
+            echo "INFRAGUARD_URL=https://infraguard-production.up.railway.app" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Transform for InfraGuard (/api/v1/ingest)
+        id: transform
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure the CSV exists before processing
+          if [ ! -f sub_list_a.csv ]; then
+            echo "Error: sub_list_a.csv not found in the repository root."
+            exit 1
+          fi
+
+          python transform_manual.py \
+            --input sub_list_a.csv \
+            --output /tmp/infraguard-ingest.json \
+            --project-id "${PROJECT_ID}" \
+            --repo-name "${REPO_NAME}"
+
+          VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
+          echo "count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
+          
+          echo "## CSV → InfraGuard" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vulnerabilities in ingest payload: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "InfraGuard URL: \`${INFRAGUARD_URL}\`" >> "$GITHUB_STEP_SUMMARY"
+          
+          python3 << 'PY'
+          import json
+          with open("/tmp/infraguard-ingest.json") as f:
+              d = json.load(f)
+          for v in d.get("vulnerabilities", []):
+              print(f"{v.get('id', '')} - {str(v.get('summary', ''))[:140]}")
+          PY
+
+      - name: Upload InfraGuard payload (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: infraguard-ingest
+          path: /tmp/infraguard-ingest.json
+
+      - name: POST to InfraGuard
+        if: steps.transform.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -S -X POST \
+            -H "Content-Type: application/json" \
+            --data @/tmp/infraguard-ingest.json \
+            "${INFRAGUARD_URL}/api/v1/ingest"
+
+      - name: No findings to ingest
+        if: steps.transform.outputs.count == '0'
+        run: |
+          echo "CSV reported 0 vulnerabilities. InfraGuard requires at least one entry — POST skipped."
