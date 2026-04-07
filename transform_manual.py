@@ -2,6 +2,7 @@
 import argparse
 import json
 import time
+import os
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -33,16 +34,26 @@ def calculate_cvss_from_vector(vector: str, cvss_type: str) -> float | None:
 
 
 def fetch_nvd_fallback_score(cve_id: str) -> float | None:
-    """Fallback to NVD API if OSV lacks CVSS data. Handles basic rate limits."""
+    """Fallback to NVD API if OSV lacks CVSS data. Uses API key if available."""
     if not cve_id.startswith("CVE-"):
         return None
         
     url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
+    headers = {}
+    
+    # Read the token mapped from GitHub Secrets
+    nvd_token = os.environ.get("NVD_TOKEN")
+    
+    if nvd_token:
+        headers["apiKey"] = nvd_token
+        # Rate limit with key: 50 requests per 30 seconds (~1.6 req/sec)
+        time.sleep(0.7) 
+    else:
+        # Rate limit without key: 5 requests per 30 seconds (~0.16 req/sec)
+        time.sleep(6.5)
+
     try:
-        # NVD without an API key is strictly rate-limited. 
-        # Sleep slightly to avoid throwing immediate 403s on thread batches.
-        time.sleep(2) 
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10)
         
         if resp.status_code == 200:
             data = resp.json()
@@ -52,6 +63,9 @@ def fetch_nvd_fallback_score(cve_id: str) -> float | None:
                 for key in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
                     if key in metrics:
                         return metrics[key][0].get("cvssData", {}).get("baseScore")
+        elif resp.status_code == 403:
+            # 403 usually means rate limit exceeded on NVD
+            print(f"Warning: Hit NVD rate limit for {cve_id}.")
     except Exception:
         pass
     return None
@@ -103,7 +117,7 @@ def process_vulnerability(vuln_id: str) -> dict | None:
 
     return {
         "id": osv_data.get("id", vuln_id),
-        "cvss_score": cvss_score,  # Guarantees the score is attached!
+        "cvss_score": cvss_score,  
         "summary": osv_data.get("summary"),
         "details": osv_data.get("details"),
         "aliases": osv_data.get("aliases", []),
@@ -166,7 +180,7 @@ def main() -> None:
     
     print("Fetching records and calculating CVSS scores concurrently...")
     
-    # Kept to 10 workers to prevent overwhelming NVD fallback
+    # Kept to 10 workers to manage concurrency and rate limiting smoothly
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_id = {executor.submit(process_vulnerability, vid): vid for vid in vuln_ids}
         
