@@ -53,12 +53,14 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          # requests for API calls, cvss to calculate scores from OSV vectors
           pip install requests cvss
 
       - name: Fetch and Transform YTD Vulnerabilities
         id: transform
         shell: bash
+        env:
+          # Safely inject the NVD token into the environment if it exists
+          NVD_TOKEN: ${{ secrets.NVD_TOKEN }}
         run: |
           set -euo pipefail
           
