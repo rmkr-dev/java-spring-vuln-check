@@ -1,4 +1,4 @@
-name: InfraGuard CSV Ingest
+name: InfraGuard YTD OSV Ingest
 
 on:
 
@@ -9,31 +9,42 @@ permissions:
   actions: write
 
 jobs:
-  csv-ingest:
+  ytd-ingest:
     runs-on: ubuntu-latest
     env:
       REPO_NAME: ${{ github.repository }}
+      YTD_FILTER: ${{ vars.YTD }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve InfraGuard target
+      - name: Resolve InfraGuard target and variables
         shell: bash
         env:
           SECRET_PROJECT_ID: ${{ secrets.INFRAGUARD_PROJECT_ID }}
           SECRET_URL: ${{ secrets.INFRAGUARD_URL }}
         run: |
           set -euo pipefail
+          
           if [ -n "${SECRET_PROJECT_ID}" ]; then
             echo "PROJECT_ID=${SECRET_PROJECT_ID}" >> "$GITHUB_ENV"
           else
             echo "PROJECT_ID=fb06957d-066d-42a7-b020-99eee25d50b9" >> "$GITHUB_ENV"
           fi
+          
           if [ -n "${SECRET_URL}" ]; then
             echo "INFRAGUARD_URL=${SECRET_URL}" >> "$GITHUB_ENV"
           else
             echo "INFRAGUARD_URL=https://infraguard-production.up.railway.app" >> "$GITHUB_ENV"
+          fi
+          
+          # Handle the dynamic YTD variable from GitHub Repo Variables
+          if [ -z "${YTD_FILTER:-}" ]; then
+            echo "YTD variable not found. Defaulting to 1 day ago."
+            echo "YTD_FILTER=$(date -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_ENV"
+          else
+            echo "Using YTD filter from vars: $YTD_FILTER"
           fi
 
       - name: Set up Python
@@ -41,19 +52,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Transform for InfraGuard (/api/v1/ingest)
+      - name: Fetch and Transform YTD Vulnerabilities
         id: transform
         shell: bash
         run: |
           set -euo pipefail
           
-          if [ ! -f sub_list_a.csv ]; then
-            echo "Error: sub_list_a.csv not found in the repository root."
-            exit 1
-          fi
-
-          python transform_manual.py \
-            --input sub_list_a.csv \
+          python transform.py \
+            --ytd "${YTD_FILTER}" \
             --output /tmp/infraguard-ingest.json \
             --project-id "${PROJECT_ID}" \
             --repo-name "${REPO_NAME}"
@@ -61,18 +67,9 @@ jobs:
           VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
           echo "count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
           
-          echo "## CSV → InfraGuard" >> "$GITHUB_STEP_SUMMARY"
-          echo "Vulnerabilities in ingest payload: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "## OSV API → InfraGuard" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vulnerabilities fetched since $YTD_FILTER: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
           echo "InfraGuard URL: \`${INFRAGUARD_URL}\`" >> "$GITHUB_STEP_SUMMARY"
-          
-          python3 << 'PY'
-          import json
-          with open("/tmp/infraguard-ingest.json") as f:
-              d = json.load(f)
-          for v in d.get("vulnerabilities", []):
-              # Prints the CVE ID along with the newly extracted CVSS Score
-              print(f"{v.get('id', 'MISSING_ID')} (CVSS: {v.get('cvss_score')}) - {str(v.get('summary', ''))[:100]}")
-          PY
 
       - name: Upload InfraGuard payload (debug)
         uses: actions/upload-artifact@v4
@@ -93,4 +90,4 @@ jobs:
       - name: No findings to ingest
         if: steps.transform.outputs.count == '0'
         run: |
-          echo "CSV reported 0 vulnerabilities. InfraGuard requires at least one entry — POST skipped."
+          echo "OSV reported 0 modified vulnerabilities since $YTD_FILTER. POST skipped."
