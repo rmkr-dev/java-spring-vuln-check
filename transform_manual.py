@@ -1,20 +1,16 @@
-"""Map OSV API vulnerabilities to InfraGuard POST /api/v1/ingest body based on YTD filter.
-
-Expected keys: project_id, repo_name, vulnerabilities[] (OSV-shaped entries with raw).
-"""
+"""Map OSV API vulnerabilities to InfraGuard, requiring a valid CVSS Score."""
 import argparse
 import json
-import urllib.request
-import urllib.error
+import time
+import requests
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from cvss import CVSS2, CVSS3, CVSS4
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Fetch OSV vulnerabilities since YTD and transform for InfraGuard."
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument("--ytd", required=True, help="Date filter in YYYY-MM-DD")
     parser.add_argument("--output", required=True, help="Path to write InfraGuard ingest JSON")
     parser.add_argument("--project-id", required=True, help="InfraGuard project ID")
@@ -22,38 +18,100 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def fetch_osv_record(vuln_id: str) -> dict | None:
-    """Fetch the official OSV record for a given ID, with basic retries."""
-    url = f"https://api.osv.dev/v1/vulns/{vuln_id}"
-    req = urllib.request.Request(url)
-    
-    # Simple retry loop to handle momentary API latency/timeouts seamlessly
-    for _ in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                if response.status == 200:
-                    return json.loads(response.read().decode('utf-8'))
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None  # If it doesn't exist on API for some reason, skip
-        except Exception:
-            pass  # Retry on network timeout/errors
+def calculate_cvss_from_vector(vector: str, cvss_type: str) -> float | None:
+    """Uses the cvss library to compute the base score from an OSV vector string."""
+    try:
+        if cvss_type == "CVSS_V3":
+            return CVSS3(vector).scores()[0]
+        elif cvss_type == "CVSS_V4":
+            return CVSS4(vector).scores()[0]
+        elif cvss_type == "CVSS_V2":
+            return CVSS2(vector).scores()[0]
+    except Exception:
+        pass
     return None
 
 
-def _normalize_vuln(vuln: dict) -> dict:
-    """Map raw OSV JSON structure natively matching OSV-Scanner standard output."""
-    aliases = vuln.get("aliases", [])
+def fetch_nvd_fallback_score(cve_id: str) -> float | None:
+    """Fallback to NVD API if OSV lacks CVSS data. Handles basic rate limits."""
+    if not cve_id.startswith("CVE-"):
+        return None
+        
+    url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={cve_id}"
+    try:
+        # NVD without an API key is strictly rate-limited. 
+        # Sleep slightly to avoid throwing immediate 403s on thread batches.
+        time.sleep(2) 
+        resp = requests.get(url, timeout=10)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            vuls = data.get("vulnerabilities", [])
+            if vuls:
+                metrics = vuls[0].get("cve", {}).get("metrics", {})
+                for key in ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
+                    if key in metrics:
+                        return metrics[key][0].get("cvssData", {}).get("baseScore")
+    except Exception:
+        pass
+    return None
+
+
+def process_vulnerability(vuln_id: str) -> dict | None:
+    """Fetches, scores, and normalizes a single vulnerability. Returns None if skipped."""
+    osv_url = f"https://api.osv.dev/v1/vulns/{vuln_id}"
+    osv_data = None
+    cvss_score = None
+
+    # 1. Fetch from OSV Primary API
+    for _ in range(3):
+        try:
+            resp = requests.get(osv_url, timeout=10)
+            if resp.status_code == 200:
+                osv_data = resp.json()
+                break
+            elif resp.status_code == 404:
+                break
+        except requests.exceptions.RequestException:
+            time.sleep(1)
+
+    # 2. Extract and Calculate Score from OSV
+    if osv_data and "severity" in osv_data:
+        for sev in osv_data["severity"]:
+            score = calculate_cvss_from_vector(sev.get("score", ""), sev.get("type", ""))
+            if score is not None:
+                cvss_score = score
+                break
+
+    # 3. Fallback to NVD if OSV missed it
+    if cvss_score is None:
+        cvss_score = fetch_nvd_fallback_score(vuln_id)
+
+    # 4. STRICT REQUIREMENT: Skip if no CVSS score is found anywhere
+    if cvss_score is None:
+        return None
+
+    # 5. Normalize (Create a base OSV shell if OSV was 404 but NVD had it)
+    if not osv_data:
+        osv_data = {
+            "id": vuln_id,
+            "summary": f"Vulnerability {vuln_id}",
+            "details": "Details fetched from fallback source due to OSV miss.",
+            "severity": [],
+            "affected": []
+        }
+
     return {
-        "id": vuln.get("id", ""),
-        "summary": vuln.get("summary"),
-        "details": vuln.get("details"),
-        "aliases": aliases,
-        "severity": vuln.get("severity", []),
-        "affected": vuln.get("affected", []),
-        "references": vuln.get("references", []),
-        "database_specific": vuln.get("database_specific", {}),
-        "raw": vuln,
+        "id": osv_data.get("id", vuln_id),
+        "cvss_score": cvss_score,  # Guarantees the score is attached!
+        "summary": osv_data.get("summary"),
+        "details": osv_data.get("details"),
+        "aliases": osv_data.get("aliases", []),
+        "severity": osv_data.get("severity", []),
+        "affected": osv_data.get("affected", []),
+        "references": osv_data.get("references", []),
+        "database_specific": osv_data.get("database_specific", {}),
+        "raw": osv_data,
     }
 
 
@@ -71,54 +129,46 @@ def main() -> None:
     vuln_ids = set()
 
     print(f"Streaming modified_id.csv to find vulnerabilities modified since {args.ytd}...")
-    req = urllib.request.Request(csv_url)
-    
     try:
-        with urllib.request.urlopen(req) as response:
-            for line in response:
-                decoded_line = line.decode('utf-8').strip()
-                if not decoded_line:
-                    continue
+        req = requests.get(csv_url, stream=True)
+        for line in req.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            
+            row = line.split(',')
+            if len(row) < 2:
+                continue
                 
-                row = decoded_line.split(',')
-                if len(row) < 2:
-                    continue
-                
-                # First column is ISO datetime, e.g., 2024-08-15T00:05:00Z
-                mod_time_str = row[0]
-                try:
-                    mod_date = datetime.strptime(mod_time_str[:10], "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-                
-                if mod_date >= ytd_date:
-                    # Second column is Ecosystem/ID. We only need the ID portion.
-                    vuln_id = row[1].split("/")[-1]
-                    vuln_ids.add(vuln_id)
-                else:
-                    # The CSV is sorted in reverse chronological order.
-                    # Once we hit an older date, we can safely stop streaming.
-                    break
+            mod_time_str = row[0]
+            try:
+                mod_date = datetime.strptime(mod_time_str[:10], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            
+            if mod_date >= ytd_date:
+                vuln_id = row[1].split("/")[-1]
+                vuln_ids.add(vuln_id)
+            else:
+                break
     except Exception as e:
-        print(f"Failed to fetch or parse modified_id.csv from OSV GCS bucket: {e}")
+        print(f"Failed to fetch or parse modified_id.csv: {e}")
         exit(1)
 
-    print(f"Found {len(vuln_ids)} unique vulnerabilities since {args.ytd}.")
+    print(f"Found {len(vuln_ids)} unique vulnerability IDs since {args.ytd}.")
     
     if not vuln_ids:
-        print("No updates found. Exiting gracefully.")
-        # Create an empty template so the rest of the pipeline doesn't break
         payload = {"project_id": args.project_id, "repo_name": args.repo_name, "vulnerabilities": []}
         output_path.write_text(json.dumps(payload), encoding="utf-8")
         return
 
     vulnerabilities = []
+    skipped_count = 0
     
-    print("Fetching full OSV records from the API concurrently...")
+    print("Fetching records and calculating CVSS scores concurrently...")
     
-    # Threading speeds up API calls significantly compared to fetching one-by-one
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_id = {executor.submit(fetch_osv_record, vid): vid for vid in vuln_ids}
+    # Kept to 10 workers to prevent overwhelming NVD fallback
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_id = {executor.submit(process_vulnerability, vid): vid for vid in vuln_ids}
         
         count = 0
         for future in as_completed(future_to_id):
@@ -128,9 +178,12 @@ def main() -> None:
             
             record = future.result()
             if record:
-                vulnerabilities.append(_normalize_vuln(record))
+                vulnerabilities.append(record)
+            else:
+                skipped_count += 1
 
-    print(f"Successfully normalized {len(vulnerabilities)} full vulnerability records.")
+    print(f"Successfully enriched {len(vulnerabilities)} vulnerabilities.")
+    print(f"Skipped {skipped_count} vulnerabilities due to missing CVSS scores.")
 
     payload = {
         "project_id": args.project_id,
@@ -139,7 +192,6 @@ def main() -> None:
     }
     
     output_path.write_text(json.dumps(payload), encoding="utf-8")
-    print(f"Enriched JSON payload saved to {output_path}")
 
 if __name__ == "__main__":
     main()
