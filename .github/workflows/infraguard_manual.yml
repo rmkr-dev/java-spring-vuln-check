@@ -39,7 +39,6 @@ jobs:
             echo "INFRAGUARD_URL=https://infraguard-production.up.railway.app" >> "$GITHUB_ENV"
           fi
           
-          # Handle the dynamic YTD variable from GitHub Repo Variables
           if [ -z "${YTD_FILTER:-}" ]; then
             echo "YTD variable not found. Defaulting to 1 day ago."
             echo "YTD_FILTER=$(date -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_ENV"
@@ -52,13 +51,18 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install Dependencies
+        run: |
+          # requests for API calls, cvss to calculate scores from OSV vectors
+          pip install requests cvss
+
       - name: Fetch and Transform YTD Vulnerabilities
         id: transform
         shell: bash
         run: |
           set -euo pipefail
           
-          python transform.py \
+          python transform_manual.py \
             --ytd "${YTD_FILTER}" \
             --output /tmp/infraguard-ingest.json \
             --project-id "${PROJECT_ID}" \
@@ -68,7 +72,7 @@ jobs:
           echo "count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
           
           echo "## OSV API → InfraGuard" >> "$GITHUB_STEP_SUMMARY"
-          echo "Vulnerabilities fetched since $YTD_FILTER: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vulnerabilities fetched with CVSS scores since $YTD_FILTER: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
           echo "InfraGuard URL: \`${INFRAGUARD_URL}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload InfraGuard payload (debug)
@@ -90,4 +94,4 @@ jobs:
       - name: No findings to ingest
         if: steps.transform.outputs.count == '0'
         run: |
-          echo "OSV reported 0 modified vulnerabilities since $YTD_FILTER. POST skipped."
+          echo "0 vulnerabilities passed the filter (or all lacked CVSS scores). POST skipped."
