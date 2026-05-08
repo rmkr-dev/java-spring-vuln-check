@@ -1,8 +1,11 @@
-// Intentional demo risk (OSV will still list multiple GHSA per coordinate):
-//   - log4j 2.14.1 → Log4Shell / related Log4j2 advisories
-//   - commons-text 1.9 → Text4Shell (GHSA-599f-7c49-w659)
-// Everything else uses Spring Boot 3.4 / current transitive versions to drop the long tail
-// (Spring 5.3 + Jetty + old Jackson/SnakeYAML + optional demo jars previously added ~50+ rows).
+// Intentional demo risk (matches top-10 CVE allowlist in transform.py / export CSV order):
+//   - log4j 2.14.1 → CVE-2021-44228, CVE-2021-45046
+//   - commons-text 1.9 → CVE-2022-42889
+// Spring Boot / Tomcat / Spring Security versions are kept on the 3.4.2 line so OSV still
+// reports the remaining allowlisted CVEs (Tomcat + spring-security-*).
+//
+// Transitive libraries outside that story are forced forward to cut noise (Thymeleaf, Logback,
+// json-smart, httpclient5, PostgreSQL driver, etc.).
 //
 // Regenerate lockfiles: ./gradlew --no-daemon dependencies --write-locks buildEnvironment --write-locks
 
@@ -43,6 +46,33 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+configurations.configureEach {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == "org.thymeleaf" &&
+                (details.requested.name == "thymeleaf" || details.requested.name == "thymeleaf-spring6")) {
+            details.useVersion("3.1.5.RELEASE")
+            details.because("CVE-2026-40477 / CVE-2026-40478 / CVE-2026-41901 (not in top-10 allowlist)")
+        }
+        if (details.requested.group == "ch.qos.logback") {
+            details.useVersion("1.5.19")
+            details.because("Logback advisories outside top-10 allowlist")
+        }
+        if (details.requested.group == "net.minidev" && details.requested.name == "json-smart") {
+            details.useVersion("2.5.2")
+            details.because("CVE-2024-57699 (not in top-10 allowlist)")
+        }
+        if (details.requested.group == "org.apache.httpcomponents.client5" &&
+                details.requested.name == "httpclient5") {
+            details.useVersion("5.5.1")
+            details.because("CVE-2025-27820 (not in top-10 allowlist)")
+        }
+        if (details.requested.group == "org.assertj" && details.requested.name == "assertj-core") {
+            details.useVersion("3.27.3")
+            details.because("Test-only dependency bumps outside top-10 allowlist")
+        }
+    }
+}
+
 dependencies {
     implementation('org.springframework.boot:spring-boot-starter-web')
     implementation('org.springframework.boot:spring-boot-starter-data-jpa')
@@ -52,14 +82,14 @@ dependencies {
     implementation('org.apache.logging.log4j:log4j-core:2.14.1')
     implementation('org.apache.logging.log4j:log4j-api:2.14.1')
 
-    implementation('org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0')
+    implementation('org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.5')
 
-    runtimeOnly('com.h2database:h2:2.2.224')
+    runtimeOnly('com.h2database:h2:2.3.232')
 
     implementation('org.apache.commons:commons-text:1.9')
 
     implementation('org.thymeleaf.extras:thymeleaf-extras-springsecurity6')
-    runtimeOnly('org.postgresql:postgresql:42.7.5')
+    runtimeOnly('org.postgresql:postgresql:42.7.7')
 
     implementation('io.jsonwebtoken:jjwt-api:0.12.6')
     runtimeOnly('io.jsonwebtoken:jjwt-impl:0.12.6')
