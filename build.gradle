@@ -1,4 +1,4 @@
-// Intentional demo risk (matches top-10 CVE allowlist in transform.py / export CSV order):
+// Intentional demo risk (OSV scan + transform.py ingest catalog from sub_list_a.csv):
 //   - log4j 2.14.1 → CVE-2021-44228, CVE-2021-45046
 //   - commons-text 1.9 → CVE-2022-42889
 // Spring Boot / Tomcat / Spring Security versions are kept on the 3.4.2 line so OSV still
@@ -51,7 +51,7 @@ configurations.configureEach {
         if (details.requested.group == "org.thymeleaf" &&
                 (details.requested.name == "thymeleaf" || details.requested.name == "thymeleaf-spring6")) {
             details.useVersion("3.1.5.RELEASE")
-            details.because("CVE-2026-40477 / CVE-2026-40478 / CVE-2026-41901 (not in top-10 allowlist)")
+            details.because("Thymeleaf advisories outside ingest catalog focus")
         }
         if (details.requested.group == "ch.qos.logback") {
             details.useVersion("1.5.19")

@@ -1,4 +1,4 @@
-# InfraGuard: Gradle lockfiles → OSV Scanner v2 → transform.py → POST /api/v1/ingest
+# InfraGuard: Gradle lockfiles → OSV Scanner v2 → transform.py (100 CVEs from sub_list_a.csv) → POST /api/v1/ingest
 #
 # OSV-Scanner v2 does NOT treat build.gradle as a Java manifest. It needs at least one of:
 #   gradle.lockfile, buildscript-gradle.lockfile, gradle/verification-metadata.xml, pom.xml
@@ -106,21 +106,54 @@ jobs:
             --input /tmp/osv-report.json \
             --output /tmp/infraguard-ingest.json \
             --project-id "${PROJECT_ID}" \
-            --repo-name "${REPO_NAME}"
-          VULN_COUNT=$(python3 -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
+            --repo-name "${REPO_NAME}" \
+            --cve-catalog sub_list_a.csv
+          python << 'PY'
+          import json
+          from collections import Counter
+
+          with open("/tmp/infraguard-ingest.json", encoding="utf-8") as f:
+              payload = json.load(f)
+          vulns = payload["vulnerabilities"]
+          expected_total = 100
+          expected = {"critical": 40, "high": 30, "medium": 30}
+
+          def label(score):
+              if score is None:
+                  return "unknown"
+              s = float(score)
+              if s >= 9.0:
+                  return "critical"
+              if s >= 7.0:
+                  return "high"
+              if s >= 4.0:
+                  return "medium"
+              return "low"
+
+          counts = Counter(label(v.get("cvss_score")) for v in vulns)
+          cve_ids = []
+          for v in vulns:
+              aliases = v.get("aliases") or []
+              cve = next((a for a in aliases if str(a).startswith("CVE-")), v.get("id"))
+              cve_ids.append(cve)
+
+          if len(vulns) != expected_total:
+              raise SystemExit(f"Expected {expected_total} vulnerabilities, got {len(vulns)}")
+          if len(set(cve_ids)) != expected_total:
+              raise SystemExit(f"Expected {expected_total} distinct CVE ids, got {len(set(cve_ids))}")
+          for sev, need in expected.items():
+              if counts.get(sev, 0) != need:
+                  raise SystemExit(f"Expected {need} {sev}, got {counts.get(sev, 0)} (counts={dict(counts)})")
+
+          print(f"count={len(vulns)}")
+          print(f"severity_counts={dict(counts)}")
+          PY
+          VULN_COUNT=$(python -c "import json; print(len(json.load(open('/tmp/infraguard-ingest.json'))['vulnerabilities']))")
           echo "count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
           echo "## OSV → InfraGuard" >> "$GITHUB_STEP_SUMMARY"
-          echo "Vulnerabilities in ingest payload: **$VULN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vulnerabilities in ingest payload: **$VULN_COUNT** (40 critical / 30 high / 30 medium)" >> "$GITHUB_STEP_SUMMARY"
           echo "InfraGuard URL: \`${INFRAGUARD_URL}\`" >> "$GITHUB_STEP_SUMMARY"
-          python3 << 'PY'
-          import json
-          with open("/tmp/osv-report.json") as f:
-              d = json.load(f)
-          for r in d.get("results", []):
-              for p in r.get("packages", []):
-                  for v in p.get("vulnerabilities", []):
-                      print(v.get("id", ""), "-", (v.get("summary") or "")[:140])
-          PY
+          echo "Project ID: \`${PROJECT_ID}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload OSV JSON
         uses: actions/upload-artifact@v4
@@ -135,7 +168,7 @@ jobs:
           path: /tmp/infraguard-ingest.json
 
       - name: POST to InfraGuard
-        if: steps.transform.outputs.count != '0'
+        if: steps.transform.outputs.count == '100'
         shell: bash
         run: |
           set -euo pipefail
@@ -144,8 +177,8 @@ jobs:
             --data @/tmp/infraguard-ingest.json \
             "${INFRAGUARD_URL}/api/v1/ingest"
 
-      - name: No findings to ingest
-        if: steps.transform.outputs.count == '0'
+      - name: Ingest payload validation failed
+        if: steps.transform.outputs.count != '100'
         run: |
-          echo "OSV reported 0 vulnerabilities. InfraGuard requires at least one entry — POST skipped."
-          echo "Ensure gradle.lockfile was generated and dependency versions are known to OSV."
+          echo "Expected exactly 100 vulnerabilities (40 critical, 30 high, 30 medium). Got: ${{ steps.transform.outputs.count }}"
+          exit 1
