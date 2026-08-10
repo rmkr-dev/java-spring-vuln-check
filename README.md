@@ -10,7 +10,7 @@ docker-compose up -d db
 # -Dspring.profiles.active=postgresql
 ```
 
-## Building and Running in Docker
+## Building and Running in Docker                      
 
 ### Build
 ```shell script
